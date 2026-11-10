@@ -1,0 +1,46 @@
+{
+  "name": "@skevo18/vue-error-component",
+  "version": "0.1.0",
+  "description": "Vue 3 request failure alerts with a copyable, redacted diagnostic report",
+  "license": "MIT",
+  "repository": "github:SKevo18/vue-error-component",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "scripts": {
+    "dev": "vite --config playground/vite.config.ts",
+    "build": "vite build && vue-tsc -p tsconfig.build.json",
+    "check": "vue-tsc -p tsconfig.json --noEmit && vitest run",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@lucide/vue": "^1.52.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@lucide/vue": "^1.66.0",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/test-utils": "^2.5.1",
+    "@vue/tsconfig": "^0.9.1",
+    "happy-dom": "^21.0.4",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "vue": "^3.5.44",
+    "vue-tsc": "^3.3.14"
+  }
+}
