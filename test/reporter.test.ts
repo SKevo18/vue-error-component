@@ -131,10 +131,11 @@ describe("capture", () => {
 });
 
 describe("report", () => {
-  it("redacts secrets and deduplicates repeated objects and failure storms", () => {
+  it("keeps the error message without its secrets and deduplicates repeated objects and failure storms", () => {
     const reporter = createErrorReporter({ app: "orchard", build: "abc123" });
     const stack = "Error: password=hunter2\n    at load (https://alice:secret@example.test/api/item?token=hidden#secret:2:4)\n    at token=hidden (https://example.test/chunk.js?api_key=private:2:4)";
-    const error = withStack(stack, "password=hunter2 Authorization: Bearer secret-body <script>evil</script>");
+    const message = "password=hunter2 Authorization: Bearer secret-body for bob@example.test at https://example.test/x?sig=signed-url failed";
+    const error = withStack(stack, message);
     const context = { method: "GET", url: "https://alice:secret@example.test/api/item?token=hidden&password=hunter2#secret", kind: "network" as const };
     reporter.report(error, context);
     reporter.report(error, context);
@@ -142,9 +143,18 @@ describe("report", () => {
     expect(reporter.entries.value).toHaveLength(1);
     expect(reporter.entries.value[0]!.count).toBe(2);
     const report = reporter.entries.value[0]!.report;
-    for (const secret of ["hunter2", "alice", "hidden", "private", "secret-body", "<script>"]) expect(report).not.toContain(secret);
+    for (const secret of ["hunter2", "alice", "hidden", "private", "secret-body", "bob@", "signed-url"]) expect(report).not.toContain(secret);
+    expect(parsed(reporter).error).toBe("Error: [redacted] [redacted] for [redacted] at https://example.test/x failed");
     expect(parsed(reporter).url).toBe("https://example.test/api/item");
-    expect(parsed(reporter).stack).toBe("at load (https://example.test/api/item:2:4)\nat [redacted] (https://example.test/chunk.js:2:4)");
+    expect(parsed(reporter).stack).toEqual(["at load (https://example.test/api/item:2:4)", "at [redacted] (https://example.test/chunk.js:2:4)"]);
+  });
+
+  it("keeps the message of thrown strings and error-like objects", () => {
+    const reporter = createErrorReporter({ maxVisible: 5 });
+    reporter.report("plain failure");
+    reporter.report({ message: "object failure" });
+    reporter.report(42);
+    expect(reporter.entries.value.map((entry) => JSON.parse(entry.report).error)).toEqual(["plain failure", "object failure", undefined]);
   });
 
   it("keeps distinct context-free errors apart", () => {
@@ -170,14 +180,14 @@ describe("report", () => {
     const reporter = createErrorReporter();
     reporter.report(withStack("load@https://example.test/assets/chunk.js?v=1:2:4\nrender/<@https://example.test/assets/app.js:10:3\n@https://example.test/assets/app.js:1:1"));
     reporter.report(withStack("fetchItems@https://example.test/assets/chunk.js:7:9\nglobal code@https://example.test/assets/app.js:1:1\nmodule code"));
-    expect(parsed(reporter, 0).stack).toBe("load@https://example.test/assets/chunk.js:2:4\nrender/<@https://example.test/assets/app.js:10:3\n@https://example.test/assets/app.js:1:1");
-    expect(parsed(reporter, 1).stack).toBe("fetchItems@https://example.test/assets/chunk.js:7:9\nglobal code@https://example.test/assets/app.js:1:1");
+    expect(parsed(reporter, 0).stack).toEqual(["load@https://example.test/assets/chunk.js:2:4", "render/<@https://example.test/assets/app.js:10:3", "@https://example.test/assets/app.js:1:1"]);
+    expect(parsed(reporter, 1).stack).toEqual(["fetchItems@https://example.test/assets/chunk.js:7:9", "global code@https://example.test/assets/app.js:1:1"]);
   });
 
   it("drops server stack traces embedded in messages and limits frames", () => {
     const reporter = createErrorReporter({ maxFrames: 1 });
     reporter.report(withStack("Error: upstream failed\n\tat com.acme.Service.charge(Service.java:42)\n    at handler (/srv/app/index.js:3:9)\n    at fetchData (https://example.test/app.js:5:1)\n    at main (https://example.test/app.js:9:1)"));
-    expect(parsed(reporter).stack).toBe("at fetchData (https://example.test/app.js:5:1)");
+    expect(parsed(reporter).stack).toEqual(["at fetchData (https://example.test/app.js:5:1)"]);
   });
 
   it("redacts encoded emails and token-like path segments", () => {
@@ -215,7 +225,7 @@ describe("report", () => {
   it("keeps private class method names in frames", () => {
     const reporter = createErrorReporter();
     reporter.report(withStack("Error: x\n    at Store.#load (https://example.test/app.js:5:1)"));
-    expect(parsed(reporter).stack).toBe("at Store.#load (https://example.test/app.js:5:1)");
+    expect(parsed(reporter).stack).toEqual(["at Store.#load (https://example.test/app.js:5:1)"]);
   });
 
   it("ignores errors chosen by the host", () => {
@@ -256,6 +266,39 @@ describe("observeWindow", () => {
     stop();
     window.dispatchEvent(new ErrorEvent("error", { error: new Error("after") }));
     expect(reporter.entries.value).toHaveLength(3);
+  });
+
+  it("adds the last console errors and warnings to reports, without secrets, until cleanup", () => {
+    const original = { error: window.console.error, warn: window.console.warn };
+    const silenced = vi.fn();
+    window.console.error = silenced;
+    window.console.warn = silenced;
+    try {
+      const reporter = createErrorReporter({ maxConsole: 2 });
+      const stop = reporter.observeWindow(window);
+      console.warn("first, dropped");
+      console.error("sync failed:", new TypeError("token=abc123 rejected"));
+      console.warn("retrying", { page: 3 });
+      reporter.report(withStack("Error: x\n    at one (https://example.test/a.js:1:1)"));
+      const lines: string[] = parsed(reporter).console;
+      expect(lines.map((line) => line.replace(/^\d\d:\d\d:\d\d\.\d{3} /, ""))).toEqual(["error: sync failed: TypeError: [redacted] rejected", 'warn: retrying {"page":3}']);
+      expect(silenced).toHaveBeenCalledTimes(3);
+      stop();
+      expect(window.console.error).toBe(silenced);
+      expect(window.console.warn).toBe(silenced);
+    } finally {
+      Object.assign(window.console, original);
+    }
+  });
+
+  it("keeps no console lines when maxConsole is 0", () => {
+    const reporter = createErrorReporter({ maxConsole: 0 });
+    const before = window.console.error;
+    const stop = reporter.observeWindow(window);
+    expect(window.console.error).toBe(before);
+    reporter.report(new Error("x"));
+    expect(parsed(reporter).console).toBeUndefined();
+    stop();
   });
 });
 

@@ -25,7 +25,8 @@ export interface ErrorMessages {
     copied: string;
     failed: string;
     heading: string;
-    privacy: string;
+    /** one short sentence above the report */
+    hint: string;
 }
 export interface CaptureOptions {
     /** deadline in ms for the request and `consume`; null disables it. a response returned from `consume` is cancelled only through `init.signal`. */
@@ -46,6 +47,8 @@ export interface ReporterOptions {
     ignore?: (error: unknown) => boolean;
     dedupMs?: number;
     maxFrames?: number;
+    /** recent console.error and console.warn calls a report includes, kept once observeWindow runs (default 10; 0 keeps none) */
+    maxConsole?: number;
     timeoutMs?: number | null;
 }
 export interface ErrorReporter {

@@ -134,6 +134,11 @@
   background: var(--vec-bg);
   overflow: auto;
   box-shadow: 0 15px 70px #0005;
+  /* the UA centres modal dialogs with margin: auto, which CSS resets such as Tailwind's preflight remove */
+  position: fixed;
+  inset: 0;
+  height: fit-content;
+  margin: auto;
 }
 
 .vec-dialog::backdrop {
@@ -169,12 +174,14 @@
   max-height: 45dvh;
   overflow: auto;
   user-select: text;
+  margin: 0;
 }
 
 .vec-dialog-footer {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  margin-top: 16px;
 }
 
 .vec-button {

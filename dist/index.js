@@ -10,7 +10,7 @@ var _hoisted_6 = ["aria-label", "onClick"];
 var _hoisted_7 = { class: "vec-dialog-header" };
 var _hoisted_8 = { id: "vec-error-heading" };
 var _hoisted_9 = ["aria-label"];
-var _hoisted_10 = { id: "vec-error-privacy" };
+var _hoisted_10 = { id: "vec-error-hint" };
 var _hoisted_11 = {
 	tabindex: "0",
 	class: "vec-report"
@@ -101,7 +101,7 @@ var ErrorHost_default = /* @__PURE__ */ defineComponent({
 				ref: dialog,
 				class: "vec-dialog",
 				"aria-labelledby": "vec-error-heading",
-				"aria-describedby": "vec-error-privacy",
+				"aria-describedby": "vec-error-hint",
 				onClose: closed,
 				onPointerdown: _cache[0] || (_cache[0] = ($event) => isRef(pressedBackdrop) ? pressedBackdrop.value = onBackdrop($event) : pressedBackdrop = onBackdrop($event)),
 				onClick: clicked
@@ -113,7 +113,7 @@ var ErrorHost_default = /* @__PURE__ */ defineComponent({
 					autofocus: "",
 					onClick: close
 				}, [createVNode(unref(X), { size: 20 })], 8, _hoisted_9)]),
-				createElementVNode("p", _hoisted_10, toDisplayString(messages.value.privacy), 1),
+				createElementVNode("p", _hoisted_10, toDisplayString(messages.value.hint), 1),
 				createElementVNode("pre", _hoisted_11, toDisplayString(selected.value.report), 1),
 				createElementVNode("footer", _hoisted_12, [createElementVNode("button", {
 					class: "vec-button",
@@ -140,7 +140,7 @@ var english = {
 	copied: "Report copied",
 	failed: "Copy failed. Select and copy the text below.",
 	heading: "Error details",
-	privacy: "This is the complete report that will be copied. Nothing is sent automatically. It includes the request ID and your browser's user agent. Error messages, request headers and bodies, and URL query values are left out. Parts of the URL that look secret are redacted on a best-effort basis."
+	hint: "Send this report to support."
 };
 var builtInMessages = {
 	en: english,
@@ -154,7 +154,7 @@ var builtInMessages = {
 		copied: "Hlásenie skopírované",
 		failed: "Kopírovanie zlyhalo. Označte a skopírujte text nižšie.",
 		heading: "Podrobnosti chyby",
-		privacy: "Toto je celé hlásenie, ktoré sa skopíruje. Nič sa neposiela automaticky. Obsahuje ID požiadavky a identifikátor vášho prehliadača (user agent). Neobsahuje chybové správy, hlavičky ani telo požiadavky, ani hodnoty parametrov URL. Časti URL, ktoré vyzerajú ako tajné údaje, sa podľa možností skryjú."
+		hint: "Pošlite toto hlásenie podpore."
 	}
 };
 var secretWord = /token|passw|secret|key|code|credential|session|auth|reset|invit|verif|confirm|magic|activat|unsubscribe/i;
@@ -191,8 +191,22 @@ function safeUrl(value) {
 function safeLabel(value) {
 	return value?.replace(/[^a-zA-Z0-9 ._:/@+-]/g, "_").slice(0, 120) || void 0;
 }
-function safeName(name) {
-	return name.replace(/\b(?:password|authorization|cookie|token|secret|api[-_]?key|csrf)\s*[:=]\s*\S+/gi, "[redacted]").replace(/[^\s@/:]+@[^\s@/:]+/g, "[redacted]").replace(/[A-Za-z0-9_=-]{32,}/g, "[redacted]").slice(0, 120);
+function safeText(text, limit) {
+	return text.replace(/\b((?:https?|wss?):\/\/[^\s?#]+)[?#]\S*/gi, "$1").replace(/\b(?:password|passwd|authorization|cookie|token|secret|api[-_]?key|csrf)\s*[:=]\s*(?:(?:bearer|basic)\s+)?\S+/gi, "[redacted]").replace(/\b(?:bearer|basic)\s+[\w.~+/=-]{8,}/gi, "[redacted]").replace(/[^\s@/:]+@[^\s@/:]+/g, "[redacted]").replace(/[A-Za-z0-9_=-]{32,}/g, "[redacted]").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+function messageOf(error) {
+	if (typeof error === "string") return error;
+	const message = error && typeof error === "object" ? error.message : void 0;
+	return typeof message === "string" ? message : void 0;
+}
+function consoleText(value) {
+	if (value instanceof Error) return `${value.name}: ${value.message}`;
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value) ?? String(value);
+	} catch {
+		return String(value);
+	}
 }
 function safeFrames(error, limit) {
 	if (!(error instanceof Error) || !error.stack) return [];
@@ -202,11 +216,11 @@ function safeFrames(error, limit) {
 		const v8 = v8Frame.exec(line);
 		if (v8) {
 			const location = `${safeUrl(v8[2])}${v8[3]}`;
-			frames.push(v8[1] ? `at ${safeName(v8[1])} (${location})` : `at ${location}`);
+			frames.push(v8[1] ? `at ${safeText(v8[1], 120)} (${location})` : `at ${location}`);
 			continue;
 		}
 		const gecko = geckoFrame.exec(line);
-		if (gecko) frames.push(`${safeName(gecko[1])}@${safeUrl(gecko[2])}${gecko[3]}`);
+		if (gecko) frames.push(`${safeText(gecko[1], 120)}@${safeUrl(gecko[2])}${gecko[3]}`);
 	}
 	return frames;
 }
@@ -227,6 +241,9 @@ function createErrorReporter(options = {}) {
 	const recent = /* @__PURE__ */ new Map();
 	const dedupMs = options.dedupMs ?? 1e4;
 	let sequence = 0;
+	/** recent console.error and console.warn lines, oldest first, filled by observeWindow */
+	const consoleLines = [];
+	const maxConsole = Math.max(0, options.maxConsole ?? 10);
 	const messages = () => {
 		const locale = typeof options.locale === "function" ? options.locale() : options.locale ?? "en";
 		return {
@@ -269,6 +286,7 @@ function createErrorReporter(options = {}) {
 		const method = ctx.method?.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 16);
 		const frames = safeFrames(error, options.maxFrames ?? 20);
 		const name = error instanceof Error ? error.name : typeof error;
+		const message = messageOf(error);
 		return {
 			kind,
 			data: {
@@ -276,14 +294,17 @@ function createErrorReporter(options = {}) {
 				build: safeLabel(options.build),
 				time: new Date(now).toISOString(),
 				kind,
+				error: message === void 0 ? void 0 : safeText(error instanceof Error ? `${name}: ${message}` : message, 500),
 				method,
 				url,
 				status: Number.isFinite(ctx.status) ? ctx.status : void 0,
 				elapsedMs: Number.isFinite(ctx.elapsedMs) ? Math.round(ctx.elapsedMs) : void 0,
 				requestId: safeLabel(ctx.requestId),
+				page: typeof location === "undefined" ? void 0 : safeUrl(location.href),
 				browser: typeof navigator === "undefined" ? void 0 : navigator.userAgent.replace(/[^a-zA-Z0-9 ._()/;-]/g, "").slice(0, 240),
 				online: typeof navigator === "undefined" ? void 0 : navigator.onLine,
-				stack: frames.join("\n") || void 0
+				stack: frames.length ? frames : void 0,
+				console: consoleLines.length ? [...consoleLines] : void 0
 			},
 			fingerprint: [
 				kind,
@@ -407,9 +428,25 @@ function createErrorReporter(options = {}) {
 		const onRejection = (event) => report(event.reason);
 		target.addEventListener("error", onError, true);
 		target.addEventListener("unhandledrejection", onRejection);
+		const output = target.console;
+		const hooks = (maxConsole ? ["error", "warn"] : []).map((level) => {
+			const original = output[level];
+			const hook = (...args) => {
+				consoleLines.push(`${(/* @__PURE__ */ new Date()).toISOString().slice(11, 23)} ${level}: ${safeText(args.map(consoleText).join(" "), 500)}`);
+				consoleLines.splice(0, consoleLines.length - maxConsole);
+				original.apply(output, args);
+			};
+			output[level] = hook;
+			return {
+				level,
+				original,
+				hook
+			};
+		});
 		return () => {
 			target.removeEventListener("error", onError, true);
 			target.removeEventListener("unhandledrejection", onRejection);
+			for (const { level, original, hook } of hooks) if (output[level] === hook) output[level] = original;
 		};
 	};
 	return {

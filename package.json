@@ -1,6 +1,6 @@
 {
   "name": "@skevo18/vue-error-component",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vue 3 request failure alerts with a copyable, redacted diagnostic report",
   "license": "MIT",
   "repository": "github:SKevo18/vue-error-component",

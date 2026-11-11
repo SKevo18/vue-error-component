@@ -29,7 +29,8 @@ export interface ErrorMessages {
   copied: string;
   failed: string;
   heading: string;
-  privacy: string;
+  /** one short sentence above the report */
+  hint: string;
 }
 
 export interface CaptureOptions {
@@ -52,6 +53,8 @@ export interface ReporterOptions {
   ignore?: (error: unknown) => boolean;
   dedupMs?: number;
   maxFrames?: number;
+  /** recent console.error and console.warn calls a report includes, kept once observeWindow runs (default 10; 0 keeps none) */
+  maxConsole?: number;
   timeoutMs?: number | null;
 }
 
@@ -75,7 +78,7 @@ const english: ErrorMessages = {
   copied: "Report copied",
   failed: "Copy failed. Select and copy the text below.",
   heading: "Error details",
-  privacy: "This is the complete report that will be copied. Nothing is sent automatically. It includes the request ID and your browser's user agent. Error messages, request headers and bodies, and URL query values are left out. Parts of the URL that look secret are redacted on a best-effort basis.",
+  hint: "Send this report to support.",
 };
 
 const builtInMessages: Record<string, ErrorMessages> = {
@@ -90,7 +93,7 @@ const builtInMessages: Record<string, ErrorMessages> = {
     copied: "Hlásenie skopírované",
     failed: "Kopírovanie zlyhalo. Označte a skopírujte text nižšie.",
     heading: "Podrobnosti chyby",
-    privacy: "Toto je celé hlásenie, ktoré sa skopíruje. Nič sa neposiela automaticky. Obsahuje ID požiadavky a identifikátor vášho prehliadača (user agent). Neobsahuje chybové správy, hlavičky ani telo požiadavky, ani hodnoty parametrov URL. Časti URL, ktoré vyzerajú ako tajné údaje, sa podľa možností skryjú.",
+    hint: "Pošlite toto hlásenie podpore.",
   },
 };
 
@@ -135,12 +138,33 @@ function safeLabel(value: string | undefined): string | undefined {
   return value?.replace(/[^a-zA-Z0-9 ._:/@+-]/g, "_").slice(0, 120) || undefined;
 }
 
-function safeName(name: string): string {
-  return name
-    .replace(/\b(?:password|authorization|cookie|token|secret|api[-_]?key|csrf)\s*[:=]\s*\S+/gi, "[redacted]")
+// Free text (frame names, error messages, console output) without the secrets it most often carries.
+function safeText(text: string, limit: number): string {
+  return text
+    .replace(/\b((?:https?|wss?):\/\/[^\s?#]+)[?#]\S*/gi, "$1")
+    .replace(/\b(?:password|passwd|authorization|cookie|token|secret|api[-_]?key|csrf)\s*[:=]\s*(?:(?:bearer|basic)\s+)?\S+/gi, "[redacted]")
+    .replace(/\b(?:bearer|basic)\s+[\w.~+/=-]{8,}/gi, "[redacted]")
     .replace(/[^\s@/:]+@[^\s@/:]+/g, "[redacted]")
     .replace(/[A-Za-z0-9_=-]{32,}/g, "[redacted]")
-    .slice(0, 120);
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+}
+
+function messageOf(error: unknown): string | undefined {
+  if (typeof error === "string") return error;
+  const message = error && typeof error === "object" ? (error as { message?: unknown }).message : undefined;
+  return typeof message === "string" ? message : undefined;
+}
+
+function consoleText(value: unknown): string {
+  if (value instanceof Error) return `${value.name}: ${value.message}`;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function safeFrames(error: unknown, limit: number): string[] {
@@ -151,11 +175,11 @@ function safeFrames(error: unknown, limit: number): string[] {
     const v8 = v8Frame.exec(line);
     if (v8) {
       const location = `${safeUrl(v8[2]!)}${v8[3]}`;
-      frames.push(v8[1] ? `at ${safeName(v8[1])} (${location})` : `at ${location}`);
+      frames.push(v8[1] ? `at ${safeText(v8[1], 120)} (${location})` : `at ${location}`);
       continue;
     }
     const gecko = geckoFrame.exec(line);
-    if (gecko) frames.push(`${safeName(gecko[1]!)}@${safeUrl(gecko[2]!)}${gecko[3]}`);
+    if (gecko) frames.push(`${safeText(gecko[1]!, 120)}@${safeUrl(gecko[2]!)}${gecko[3]}`);
   }
   return frames;
 }
@@ -179,6 +203,9 @@ export function createErrorReporter(options: ReporterOptions = {}): ErrorReporte
   const recent = new Map<string, { id: number; at: number }>();
   const dedupMs = options.dedupMs ?? 10000;
   let sequence = 0;
+  /** recent console.error and console.warn lines, oldest first, filled by observeWindow */
+  const consoleLines: string[] = [];
+  const maxConsole = Math.max(0, options.maxConsole ?? 10);
 
   const messages = (): ErrorMessages => {
     const locale = typeof options.locale === "function" ? options.locale() : options.locale ?? "en";
@@ -213,19 +240,23 @@ export function createErrorReporter(options: ReporterOptions = {}): ErrorReporte
     const method = ctx.method?.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 16);
     const frames = safeFrames(error, options.maxFrames ?? 20);
     const name = error instanceof Error ? error.name : typeof error;
+    const message = messageOf(error);
     const data = {
       application: safeLabel(options.app),
       build: safeLabel(options.build),
       time: new Date(now).toISOString(),
       kind,
+      error: message === undefined ? undefined : safeText(error instanceof Error ? `${name}: ${message}` : message, 500),
       method,
       url,
       status: Number.isFinite(ctx.status) ? ctx.status : undefined,
       elapsedMs: Number.isFinite(ctx.elapsedMs) ? Math.round(ctx.elapsedMs!) : undefined,
       requestId: safeLabel(ctx.requestId),
+      page: typeof location === "undefined" ? undefined : safeUrl(location.href),
       browser: typeof navigator === "undefined" ? undefined : navigator.userAgent.replace(/[^a-zA-Z0-9 ._()/;-]/g, "").slice(0, 240),
       online: typeof navigator === "undefined" ? undefined : navigator.onLine,
-      stack: frames.join("\n") || undefined,
+      stack: frames.length ? frames : undefined,
+      console: consoleLines.length ? [...consoleLines] : undefined,
     };
     return { kind, data, fingerprint: [kind, method, url, ctx.status, name, frames[0]].join(" ") };
   };
@@ -317,9 +348,23 @@ export function createErrorReporter(options: ReporterOptions = {}): ErrorReporte
     const onRejection = (event: PromiseRejectionEvent) => report(event.reason);
     target.addEventListener("error", onError, true);
     target.addEventListener("unhandledrejection", onRejection);
+    // the console calls before a failure often explain it: keep the last few for the report.
+    // lib.dom declares console on the global scope only, but every Window has one.
+    const output: Console = (target as Window & typeof globalThis).console;
+    const hooks = (maxConsole ? (["error", "warn"] as const) : []).map((level) => {
+      const original = output[level];
+      const hook = (...args: unknown[]) => {
+        consoleLines.push(`${new Date().toISOString().slice(11, 23)} ${level}: ${safeText(args.map(consoleText).join(" "), 500)}`);
+        consoleLines.splice(0, consoleLines.length - maxConsole);
+        original.apply(output, args);
+      };
+      output[level] = hook;
+      return { level, original, hook };
+    });
     return () => {
       target.removeEventListener("error", onError, true);
       target.removeEventListener("unhandledrejection", onRejection);
+      for (const { level, original, hook } of hooks) if (output[level] === hook) output[level] = original;
     };
   };
 

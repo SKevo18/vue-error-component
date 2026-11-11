@@ -80,7 +80,7 @@ async function copy() {
       ref="dialog"
       class="vec-dialog"
       aria-labelledby="vec-error-heading"
-      aria-describedby="vec-error-privacy"
+      aria-describedby="vec-error-hint"
       @close="closed"
       @pointerdown="pressedBackdrop = onBackdrop($event)"
       @click="clicked"
@@ -92,7 +92,7 @@ async function copy() {
             <X :size="20" />
           </button>
         </header>
-        <p id="vec-error-privacy">{{ messages.privacy }}</p>
+        <p id="vec-error-hint">{{ messages.hint }}</p>
         <pre tabindex="0" class="vec-report">{{ selected.report }}</pre>
         <footer class="vec-dialog-footer">
           <button class="vec-button" type="button" @click="copy"><Copy :size="16" />{{ messages.copy }}</button>
