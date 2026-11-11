@@ -78,7 +78,7 @@ const english: ErrorMessages = {
   copied: "Report copied",
   failed: "Copy failed. Select and copy the text below.",
   heading: "Error details",
-  hint: "Send this report to support.",
+  hint: "Send this report to the maintainers of this application.",
 };
 
 const builtInMessages: Record<string, ErrorMessages> = {
@@ -93,7 +93,7 @@ const builtInMessages: Record<string, ErrorMessages> = {
     copied: "Hlásenie skopírované",
     failed: "Kopírovanie zlyhalo. Označte a skopírujte text nižšie.",
     heading: "Podrobnosti chyby",
-    hint: "Pošlite toto hlásenie podpore.",
+    hint: "Pošlite toto hlásenie správcom tejto aplikácie.",
   },
 };
 

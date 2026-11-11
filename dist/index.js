@@ -140,7 +140,7 @@ var english = {
 	copied: "Report copied",
 	failed: "Copy failed. Select and copy the text below.",
 	heading: "Error details",
-	hint: "Send this report to support."
+	hint: "Send this report to the maintainers of this application."
 };
 var builtInMessages = {
 	en: english,
@@ -154,7 +154,7 @@ var builtInMessages = {
 		copied: "Hlásenie skopírované",
 		failed: "Kopírovanie zlyhalo. Označte a skopírujte text nižšie.",
 		heading: "Podrobnosti chyby",
-		hint: "Pošlite toto hlásenie podpore."
+		hint: "Pošlite toto hlásenie správcom tejto aplikácie."
 	}
 };
 var secretWord = /token|passw|secret|key|code|credential|session|auth|reset|invit|verif|confirm|magic|activat|unsubscribe/i;
